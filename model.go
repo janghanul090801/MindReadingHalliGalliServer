@@ -8,6 +8,7 @@ type Server struct {
 
 type Room struct {
 	ID      int             `json:"id"`
+	Name    string          `json:"name"`
 	Players map[int]*Client `json:"players"`
 	Game    *Game
 }
@@ -74,8 +75,16 @@ type Card struct {
 }
 
 type Packet struct {
-	Type   string `json:"type"` // create_room, join_room, ring, draw
-	RoomID int    `json:"room_id,omitempty"`
+	Type     string     `json:"type"` // create_room, join_room, ring, draw
+	RoomID   int        `json:"room_id,omitempty"`
+	RoomName string     `json:"room_name,omitempty"` // ★ 방 생성 요청 시 방 제목을 받기 위한 필드
+	Rooms    []RoomInfo `json:"rooms,omitempty"`
+}
+
+type RoomInfo struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	PlayerCount int    `json:"player_count"`
 }
 
 //

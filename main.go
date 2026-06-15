@@ -58,9 +58,14 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		ID:   playerID,
 	}
 
+	initialList := getRoomListPacket()
+	initialData, _ := json.Marshal(initialList)
+	conn.WriteMessage(websocket.TextMessage, initialData)
+
 	defer func() {
 		RemoveClient(client)
 		conn.Close()
+		BroadcastRoomList() // ★ 방에서 나가서 방이 터지거나 인원이 바뀌었으므로 리스트 갱신
 	}()
 
 	for {
@@ -77,13 +82,19 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch packet.Type {
 		case "create_room":
-			HandleCreateRoom(client)
+			// ★ 클라이언트 패킷에 담겨온 RoomName을 함께 전달
+			HandleCreateRoom(client, packet.RoomName)
 		case "join_room":
 			HandleJoinRoom(client, packet.RoomID)
+			BroadcastRoomList() // ★ 인원수 변동 반영을 위해 갱신
 		case "ring":
 			HandleRing(client)
 		case "draw":
 			HandleDraw(client)
+		case "get_rooms": // ★ 클라이언트가 수동으로 새로고침 요청을 보냈을 때 대응
+			listPacket := getRoomListPacket()
+			listData, _ := json.Marshal(listPacket)
+			conn.WriteMessage(websocket.TextMessage, listData)
 		default:
 			log.Println("unknown packet:", packet.Type)
 		}
@@ -101,12 +112,19 @@ func RemoveClient(client *Client) {
 	}
 }
 
-func HandleCreateRoom(client *Client) {
+func HandleCreateRoom(client *Client, roomName string) {
 	serverMu.Lock()
 	roomID := nextRoomID
 	nextRoomID++
+
+	// 방 제목 기본값 예외 처리
+	if roomName == "" {
+		roomName = fmt.Sprintf("맛있는 할리갈리 %d번방", roomID)
+	}
+
 	room := &Room{
 		ID:      roomID,
+		Name:    roomName, // ★ 방 이름 매핑
 		Players: make(map[int]*Client),
 	}
 	server.Rooms[roomID] = room
@@ -119,6 +137,9 @@ func HandleCreateRoom(client *Client) {
 		"type":    "room_created",
 		"room_id": room.ID,
 	})
+
+	// ★ 새 방이 생겼으니 대기실(메인화면)에 있는 다른 사람들에게 방 목록 최신화 브로드캐스트
+	BroadcastRoomList()
 }
 
 func HandleJoinRoom(client *Client, roomID int) {
@@ -344,5 +365,42 @@ func GetFilteredState(room *Room, playerID int) map[string]any {
 		"turn":        game.Turn,
 		"card_queues": queues,
 		"card_stacks": stacks,
+	}
+}
+
+// 현재 개설된 모든 방 목록을 묶어서 패킷으로 반환
+func getRoomListPacket() Packet {
+	serverMu.Lock()
+	defer serverMu.Unlock()
+
+	roomInfos := make([]RoomInfo, 0, len(server.Rooms))
+	for _, room := range server.Rooms {
+		// 이미 2명이 차서 게임 중인 방도 목록에는 보여주되 인원수 표시
+		roomInfos = append(roomInfos, RoomInfo{
+			ID:          room.ID,
+			Name:        room.Name,
+			PlayerCount: len(room.Players),
+		})
+	}
+
+	return Packet{
+		Type:  "room_list",
+		Rooms: roomInfos,
+	}
+}
+
+// 연결된 모든 클라이언트 혹은 로비 유저에게 방 목록 새로고침 (간단 버전)
+func BroadcastRoomList() {
+	packet := getRoomListPacket()
+	// 현재 구조에서는 전체 방을 순회하며 모든 플레이어에게 뿌려줍니다.
+	serverMu.Lock()
+	defer serverMu.Unlock()
+	for _, room := range server.Rooms {
+		for _, client := range room.Players {
+			// 게임 중이 아닌 대기 상태인 유저에게만 보낼 수도 있습니다.
+			// 여기서는 일단 단순 전체 전송으로 구현합니다.
+			data, _ := json.Marshal(packet)
+			client.Conn.WriteMessage(websocket.TextMessage, data)
+		}
 	}
 }
