@@ -174,7 +174,7 @@ func StartGame(room *Room) {
 	}
 
 	// Create and shuffle deck
-	fruits := []string{"strawberry", "banana", "lime", "plum"}
+	fruits := []string{"apple", "banana", "grape", "lime"}
 	cards := make([]Card, 0)
 	id := 1
 	for _, fruit := range fruits {
