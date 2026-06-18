@@ -335,6 +335,16 @@ func GetFilteredState(room *Room, playerID int) map[string]any {
 		queues[id] = len(q.Queue)
 	}
 
+	var opponentNextCard any = nil
+	for id, q := range game.CardQueues {
+		if id != playerID { // 상대방의 덱이라면
+			if len(q.Queue) > 0 {
+				// 다음에 낼 카드는 Queue의 맨 앞(0번 인덱스) 카드입니다.
+				opponentNextCard = q.Queue[0]
+			}
+		}
+	}
+
 	stacks := make(map[int][]any)
 	for id, s := range game.CardStacks {
 		stackCards := make([]any, 0)
@@ -361,10 +371,11 @@ func GetFilteredState(room *Room, playerID int) map[string]any {
 	}
 
 	return map[string]any{
-		"type":        "game_state",
-		"turn":        game.Turn,
-		"card_queues": queues,
-		"card_stacks": stacks,
+		"type":               "game_state",
+		"turn":               game.Turn,
+		"card_queues":        queues,
+		"card_stacks":        stacks,
+		"opponent_next_card": opponentNextCard,
 	}
 }
 
@@ -390,17 +401,24 @@ func getRoomListPacket() Packet {
 }
 
 // 연결된 모든 클라이언트 혹은 로비 유저에게 방 목록 새로고침 (간단 버전)
+// main.go 내의 BroadcastRoomList 함수를 아래와 같이 수정
+
 func BroadcastRoomList() {
 	packet := getRoomListPacket()
-	// 현재 구조에서는 전체 방을 순회하며 모든 플레이어에게 뿌려줍니다.
+	data, _ := json.Marshal(packet)
+
 	serverMu.Lock()
 	defer serverMu.Unlock()
+
+	// 📌 모든 방을 순회하며 방 안에 대기 중이거나 플레이 중인 유저를 포함하여 전체 전송
+	// (로비 전용 커넥션 풀을 따로 관리한다면 그곳에 쏘는 것이 가장 좋으나,
+	// 현재 구조에서는 모든 클라이언트에게 뿌려주어 동기화를 강제합니다.)
 	for _, room := range server.Rooms {
 		for _, client := range room.Players {
-			// 게임 중이 아닌 대기 상태인 유저에게만 보낼 수도 있습니다.
-			// 여기서는 일단 단순 전체 전송으로 구현합니다.
-			data, _ := json.Marshal(packet)
-			client.Conn.WriteMessage(websocket.TextMessage, data)
+			if client.Conn != nil {
+				client.Conn.WriteMessage(websocket.TextMessage, data)
+			}
 		}
 	}
+	fmt.Println("📢 [Server] 모든 클라이언트에게 최신 방 목록을 브로드캐스트했습니다.")
 }
